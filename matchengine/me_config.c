@@ -5,8 +5,43 @@
 
 # include "me_config.h"
 
+/*---------------------------------------------------------------------------
+VARIABLE: struct settings settings;
+
+PURPOSE: 
+    全局配置信息，从config.json中读取
+
+REMARKS: 
+    
+---------------------------------------------------------------------------*/
 struct settings settings;
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int load_assets(json_t *root, const char *key)
+
+PURPOSE: 
+    Read assets into settings.assets
+
+PARAMETERS:
+    root – json object from config file
+    key  - key of assets config. It is "assets" in config.json
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    ret = load_assets(root, "assets");
+    if (ret < 0) {
+        printf("load assets config fail: %d\n", ret);
+        return -__LINE__;
+    }
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 static int load_assets(json_t *root, const char *key)
 {
     json_t *node = json_object_get(root, key);
@@ -30,6 +65,32 @@ static int load_assets(json_t *root, const char *key)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int load_markets(json_t *root, const char *key)
+
+PURPOSE: 
+    Read markets into settings.markets
+
+PARAMETERS:
+    root – json object from config file
+    key  - key of market config. It is "markets" in config.json
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    ret = load_markets(root, "markets");
+    if (ret < 0) {
+        printf("load markets config fail: %d\n", ret);
+        return -__LINE__;
+    }
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 static int load_markets(json_t *root, const char *key)
 {
     json_t *node = json_object_get(root, key);
@@ -63,6 +124,27 @@ static int load_markets(json_t *root, const char *key)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int read_config_from_json(json_t *root)
+
+PURPOSE: 
+    Read config into settings.
+
+PARAMETERS:
+    root – json object from config file
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    
+
+REMARKS: 
+    
+---------------------------------------------------------------------------*/
 static int read_config_from_json(json_t *root)
 {
     int ret;
@@ -142,6 +224,30 @@ static int read_config_from_json(json_t *root)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int init_config(const char *path)
+
+PURPOSE: 
+    Read config file and do init.
+
+PARAMETERS:
+    path - config file path
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    ret = init_config(argv[1]);
+    if (ret < 0) {
+        error(EXIT_FAILURE, errno, "load config fail: %d", ret);
+    }
+
+REMARKS: 
+    被main()调用，完成config初始化
+---------------------------------------------------------------------------*/
 int init_config(const char *path)
 {
     json_error_t error;

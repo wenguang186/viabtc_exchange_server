@@ -9,7 +9,26 @@
 # include "me_history.h"
 # include "me_message.h"
 
+/*---------------------------------------------------------------------------
+VARIABLE: uint64_t order_id_start;
+
+PURPOSE: 
+    最后一次的委单id，新的委单使用++order_id_start作为委单id
+
+REMARKS: 
+    保存快照时，保存该值。恢复快照时，恢复该值。
+---------------------------------------------------------------------------*/
 uint64_t order_id_start;
+
+/*---------------------------------------------------------------------------
+VARIABLE: uint64_t deals_id_start;
+
+PURPOSE: 
+    最后一次的成交id，新的成交单使用++order_id_start作为id
+
+REMARKS: 
+    保存快照时，保存该值。恢复快照时，恢复该值。
+---------------------------------------------------------------------------*/
 uint64_t deals_id_start;
 
 struct dict_user_key {
@@ -80,6 +99,30 @@ static void dict_order_key_free(void *key)
     free(key);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int order_match_compare(const void *value1, const void *value2)
+
+PURPOSE: 
+    比较两个同一买卖方向委单的优先次序
+
+PARAMETERS:
+    value1 - 委单1的对象指针
+    value2 - 委单2的对象指针
+
+RETURN VALUE: 
+    >0，value1比value2靠后，撮合优先级低，在队列中要往后排
+    <0，value1比value2靠前，撮合优先级高，在队列中要往前排
+    =0，value1与value2是同一委单
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 static int order_match_compare(const void *value1, const void *value2)
 {
     const order_t *order1 = value1;
@@ -132,6 +175,27 @@ static void order_free(order_t *order)
     free(order);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: json_t *get_order_info(order_t *order)
+
+PURPOSE: 
+    将order_t转换为json_t
+
+PARAMETERS:
+    <Parameter name> –<Parameter description>
+
+RETURN VALUE: 
+    <Description of function return value>
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 json_t *get_order_info(order_t *order)
 {
     json_t *info = json_object();
@@ -156,6 +220,27 @@ json_t *get_order_info(order_t *order)
     return info;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int order_put(market_t *m, order_t *order)
+
+PURPOSE: 
+    把委单插入market的买卖队列，并冻结未成交部分的资产额度
+PARAMETERS:
+    m - 
+    order - 
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    限价单不能完全成交时，写入market的深度
+---------------------------------------------------------------------------*/
 static int order_put(market_t *m, order_t *order)
 {
     if (order->type != MARKET_ORDER_TYPE_LIMIT)
@@ -206,6 +291,29 @@ static int order_put(market_t *m, order_t *order)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int order_finish(bool real, market_t *m, order_t *order)
+
+PURPOSE: 
+    关闭委单（完全成交、撤单），从买卖队列中删除，解冻资产，并添加到数据库委单历史
+
+PARAMETERS:
+    real -
+    m -
+    order -
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 static int order_finish(bool real, market_t *m, order_t *order)
 {
     if (order->side == MARKET_ORDER_SIDE_ASK) {
@@ -256,6 +364,46 @@ static int order_finish(bool real, market_t *m, order_t *order)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: market_t *market_create(struct market *conf)
+
+PURPOSE: 
+    根据配置创建market变量
+    
+PARAMETERS:
+    conf - 从config.json中读取的maret配置
+    
+RETURN VALUE: 
+    None
+
+EXCEPTION: 
+    Return market_t pointer， if success，else NULL
+
+EXAMPLE CALL:
+    for (size_t i = 0; i < settings.market_num; ++i) {
+        market_t *m = market_create(&settings.markets[i]);
+        if (m == NULL) {
+            return -__LINE__;
+        }
+
+        dict_add(dict_market, settings.markets[i].name, m);
+    }
+
+REMARKS: 
+    config.json中的货币对的定义
+    {
+        "name": "BTCBCH",
+        "stock": {
+            "name": "BTC",
+            "prec": 8
+        },
+        "money": {
+            "name": "BCH",
+            "prec": 8
+        },
+        "min_amount": "0.001"
+    }
+---------------------------------------------------------------------------*/
 market_t *market_create(struct market *conf)
 {
     if (!asset_exist(conf->stock) || !asset_exist(conf->money))
@@ -311,6 +459,33 @@ market_t *market_create(struct market *conf)
     return m;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int append_balance_trade_add(order_t *order, const char *asset, 
+                mpd_t *change, mpd_t *price, mpd_t *amount)
+
+PURPOSE: 
+    将委单成交导致的余额增加，添加到balance_history_${user_id}
+    
+PARAMETERS:
+    order  - 委单变量指针
+    asset  - 增加资产币种
+    change - 增加数量
+    price  - 成交价格，用于添加detail
+    amount - 成交数量，用于添加detail
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    撮合成交时，增加的资产调用该函数保存进历史数据库（异步）
+    成交信息保存在detail    
+---------------------------------------------------------------------------*/
 static int append_balance_trade_add(order_t *order, const char *asset, mpd_t *change, mpd_t *price, mpd_t *amount)
 {
     json_t *detail = json_object();
@@ -325,6 +500,33 @@ static int append_balance_trade_add(order_t *order, const char *asset, mpd_t *ch
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int append_balance_trade_sub(order_t *order, const char *asset, 
+            mpd_t *change, mpd_t *price, mpd_t *amount)
+
+PURPOSE: 
+    将委单成交导致的余额减少，添加到balance_history_${user_id}
+    
+PARAMETERS:
+    order  - 委单变量指针
+    asset  - 减少资产币种
+    change - 减少数量
+    price  - 成交价格，用于添加detail
+    amount - 成交数量，用于添加detail
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    撮合成交时，减少的资产调用该函数保存进历史数据库（异步）
+    成交信息保存在detail    
+---------------------------------------------------------------------------*/
 static int append_balance_trade_sub(order_t *order, const char *asset, mpd_t *change, mpd_t *price, mpd_t *amount)
 {
     json_t *detail = json_object();
@@ -342,7 +544,34 @@ static int append_balance_trade_sub(order_t *order, const char *asset, mpd_t *ch
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int append_balance_trade_fee(order_t *order, const char *asset, 
+                mpd_t *change, mpd_t *price, mpd_t *amount, mpd_t *fee_rate)
 
+PURPOSE: 
+    将委单成交的手续费，导致的余额减少，添加到balance_history_${user_id}
+    
+PARAMETERS:
+    order  - 委单变量指针
+    asset  - 减少资产币种
+    change - 减少数量，即手续费
+    price  - 成交价格，用于添加detail
+    amount - 成交数量，用于添加detail
+    fee_rate - 手续费比例，用于添加detail
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    撮合成交时，手续费导致的减少的资产，调用该函数保存进历史数据库（异步）
+    成交信息保存在detail    
+---------------------------------------------------------------------------*/
 static int append_balance_trade_fee(order_t *order, const char *asset, mpd_t *change, mpd_t *price, mpd_t *amount, mpd_t *fee_rate)
 {
     json_t *detail = json_object();
@@ -361,6 +590,43 @@ static int append_balance_trade_fee(order_t *order, const char *asset, mpd_t *ch
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int execute_limit_ask_order(bool real, market_t *m, order_t *taker)
+
+PURPOSE: 
+    执行买单撮合，查找bids卖方队列，撮合可以成交的对手单。
+    撮合成功，则计算成交价格/数量/费用，调整买卖双方委单状态、资产余额，
+    如果完全成交，会调用接口，添加order/balance/deal历史记录，并向kafka发送orders/deals消息
+    如果部分成交，添加到买方队列，添加balance/deal历史记录，并向kafka发送orders/deals消息
+    如果未成交，添加到asks卖方队列，并向kafka发送orders/deals消息
+
+PARAMETERS:
+    real  - 是否真实操作，默认为true
+    m     - market变量指针
+    taker - 吃单变量（限价卖单）
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    int ret;
+    if (side == MARKET_ORDER_SIDE_ASK) {
+        ret = execute_limit_ask_order(real, m, order);
+    } else {
+        ret = execute_limit_bid_order(real, m, order);
+    }
+    if (ret < 0) {
+        log_error("execute order: %"PRIu64" fail: %d", order->id, ret);
+        order_free(order);
+        return -__LINE__;
+    }
+
+REMARKS: 
+    收到order.putlimit命令之后，调用该函数在对方队列进行撮合
+---------------------------------------------------------------------------*/
 static int execute_limit_ask_order(bool real, market_t *m, order_t *taker)
 {
     mpd_t *price    = mpd_new(&mpd_ctx);
@@ -464,6 +730,43 @@ static int execute_limit_ask_order(bool real, market_t *m, order_t *taker)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int execute_limit_bid_order(bool real, market_t *m, order_t *taker)
+
+PURPOSE: 
+    执行买单撮合，查找asks卖方队列，撮合可以成交的对手单。
+    撮合成功，则计算成交价格/数量/费用，调整买卖双方委单状态、资产余额，
+    如果完全成交，会调用接口，添加order/balance/deal历史记录，并向kafka发送orders/deals消息
+    如果部分成交，添加到买方队列，添加balance/deal历史记录，并向kafka发送orders/deals消息
+    如果未成交，添加到bids买方队列，并向kafka发送orders/deals消息
+
+PARAMETERS:
+    real  - 是否真实操作，默认为true
+    m     - market变量指针
+    taker - 吃单变量（限价买单）
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    int ret;
+    if (side == MARKET_ORDER_SIDE_ASK) {
+        ret = execute_limit_ask_order(real, m, order);
+    } else {
+        ret = execute_limit_bid_order(real, m, order);
+    }
+    if (ret < 0) {
+        log_error("execute order: %"PRIu64" fail: %d", order->id, ret);
+        order_free(order);
+        return -__LINE__;
+    }
+
+REMARKS: 
+    收到order.putlimit命令之后，调用该函数在对方队列进行撮合
+---------------------------------------------------------------------------*/
 static int execute_limit_bid_order(bool real, market_t *m, order_t *taker)
 {
     mpd_t *price    = mpd_new(&mpd_ctx);
@@ -567,6 +870,53 @@ static int execute_limit_bid_order(bool real, market_t *m, order_t *taker)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int market_put_limit_order(bool real, json_t **result, market_t *m, 
+    uint32_t user_id, uint32_t side, mpd_t *amount, mpd_t *price, 
+    mpd_t *taker_fee, mpd_t *maker_fee, const char *source)
+
+PURPOSE: 
+    根据传参生成限价单，并执行撮合
+    如果完全成交，保存order/balance/deal历史，并发送orders到kafka
+    如果未完全成交，添加到买卖队列，保存balance/deal历史，并发送orders/deals到kafka
+
+PARAMETERS:
+    real      - 是否真实操作，默认为true
+    result    - 处理完成的order的json结构
+    m         - 货币对market
+    user_id   - 
+    side      - 买卖方向
+    amount    - 委单金额
+    price     - 委单价格
+    taker_fee - 吃单手续费
+    maker_fee - 做市商手续费
+    source    - 来源字符串
+    
+RETURN VALUE: 
+    >=0，成功下达委单
+    =-1，可用余额不足
+    =-2，下单数量太少
+    <-2，发生错误的行号
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    json_t *result = NULL;
+    int ret = market_put_limit_order(true, &result, market, user_id, side, amount, price, taker_fee, maker_fee, source);
+
+    if (ret == -1) {
+        return reply_error(ses, pkg, 10, "balance not enough");
+    } else if (ret == -2) {
+        return reply_error(ses, pkg, 11, "amount too small");
+    } else if (ret < 0) {
+        log_fatal("market_put_limit_order fail: %d", ret);
+        return reply_error_internal_error(ses, pkg);
+    }
+
+REMARKS: 
+    收到order.putlimit命令之后，调用该函数执行委单
+---------------------------------------------------------------------------*/
 int market_put_limit_order(bool real, json_t **result, market_t *m, uint32_t user_id, uint32_t side, mpd_t *amount, mpd_t *price, mpd_t *taker_fee, mpd_t *maker_fee, const char *source)
 {
     if (side == MARKET_ORDER_SIDE_ASK) {
@@ -658,6 +1008,43 @@ int market_put_limit_order(bool real, json_t **result, market_t *m, uint32_t use
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int execute_market_ask_order(bool real, market_t *m, order_t *taker)
+
+PURPOSE: 
+    执行市价卖单撮合
+    查找bids买方队列，撮合可以成交的买单，计算成交价格/数量/费用，
+    调整买卖双方委单状态、资产余额，添加balance/deal/order历史记录，
+    并向kafka发送orders/deals消息
+
+PARAMETERS:
+    real  - 是否真实操作，默认为true
+    m     - market变量指针
+    taker - 吃单变量（市价卖单）
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    int ret;
+    if (side == MARKET_ORDER_SIDE_ASK) {
+        ret = execute_market_ask_order(real, m, order);
+    } else {
+        ret = execute_market_bid_order(real, m, order);
+    }
+    if (ret < 0) {
+        log_error("execute order: %"PRIu64" fail: %d", order->id, ret);
+        order_free(order);
+        return -__LINE__;
+    }
+
+REMARKS: 
+    收到order.putmarket命令之后，调用该函数在对方队列进行撮合
+    如果吃光对手盘，那么市价单也不会添加到买卖队列，而是以成交数量关闭委单
+---------------------------------------------------------------------------*/
 static int execute_market_ask_order(bool real, market_t *m, order_t *taker)
 {
     mpd_t *price    = mpd_new(&mpd_ctx);
@@ -757,6 +1144,43 @@ static int execute_market_ask_order(bool real, market_t *m, order_t *taker)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int execute_market_bid_order(bool real, market_t *m, order_t *taker)
+
+PURPOSE: 
+    执行市价买单撮合
+    查找asks卖方队列，撮合可以成交的对手单，并计算成交价格/数量/费用，
+    调整买卖双方委单状态、资产余额，添加balance/deal/order历史记录，
+    并向kafka发送orders/deals消息
+
+PARAMETERS:
+    real  - 是否真实操作，默认为true
+    m     - market变量指针
+    taker - 吃单变量（市价买单）
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    int ret;
+    if (side == MARKET_ORDER_SIDE_ASK) {
+        ret = execute_market_ask_order(real, m, order);
+    } else {
+        ret = execute_market_bid_order(real, m, order);
+    }
+    if (ret < 0) {
+        log_error("execute order: %"PRIu64" fail: %d", order->id, ret);
+        order_free(order);
+        return -__LINE__;
+    }
+
+REMARKS: 
+    收到order.putmarket命令之后，调用该函数在对方队列进行撮合
+    如果吃光对手盘，那么市价单也不会添加到买卖队列，而是以成交数量关闭委单
+---------------------------------------------------------------------------*/
 static int execute_market_bid_order(bool real, market_t *m, order_t *taker)
 {
     mpd_t *price    = mpd_new(&mpd_ctx);
@@ -871,6 +1295,53 @@ static int execute_market_bid_order(bool real, market_t *m, order_t *taker)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int market_put_market_order(bool real, json_t **result, market_t *m, 
+                uint32_t user_id, uint32_t side, mpd_t *amount, mpd_t *taker_fee,
+                const char *source)
+
+
+PURPOSE: 
+    根据传参生成市价单，并执行撮合，保存委单/余额/成交历史，并发送orders/deals到kafka
+
+PARAMETERS:
+    real      - 是否真实操作，默认为true
+    result    - 处理完成的order的json结构
+    m         - 货币对market
+    user_id   - 
+    side      - 买卖方向
+    amount    - 委单金额
+    taker_fee - 吃单手续费
+    source    - 来源字符串
+    
+RETURN VALUE: 
+    >=0，成功下达委单
+    =-1，可用余额不足
+    =-2，下单数量太少
+    =-3，没有对手盘
+    <-3，发生错误的行号
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    json_t *result = NULL;
+    int ret = market_put_market_order(true, &result, market, user_id, side, amount, taker_fee, source);
+    if (ret == -1) {
+        return reply_error(ses, pkg, 10, "balance not enough");
+    } else if (ret == -2) {
+        return reply_error(ses, pkg, 11, "amount too small");
+    } else if (ret == -3) {
+        return reply_error(ses, pkg, 12, "no enough trader");
+    } else if (ret < 0) {
+        log_fatal("market_put_limit_order fail: %d", ret);
+        return reply_error_internal_error(ses, pkg);
+    }
+
+REMARKS: 
+    收到order.putmarket命令之后，调用该函数执行委单
+    如果吃光对手盘，那么市价单也不会添加到买卖队列，而是以成交数量关闭委单
+---------------------------------------------------------------------------*/
 int market_put_market_order(bool real, json_t **result, market_t *m, uint32_t user_id, uint32_t side, mpd_t *amount, mpd_t *taker_fee, const char *source)
 {
     if (side == MARKET_ORDER_SIDE_ASK) {
@@ -972,6 +1443,32 @@ int market_put_market_order(bool real, json_t **result, market_t *m, uint32_t us
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int market_cancel_order(bool real, json_t **result, market_t *m, order_t *order)
+
+PURPOSE: 
+    撤销委单
+    调用接口，发送orders消息到kafka
+    调用接口，从买卖队列中删除委单，解冻资产，写入委单历史
+    
+PARAMETERS:
+    real   - 是否执行
+    result - 委单转换的json
+    m      - 货币对
+    order  - 委单
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    收到order.cancel命令时调用
+---------------------------------------------------------------------------*/
 int market_cancel_order(bool real, json_t **result, market_t *m, order_t *order)
 {
     if (real) {
@@ -982,11 +1479,60 @@ int market_cancel_order(bool real, json_t **result, market_t *m, order_t *order)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int market_put_order(market_t *m, order_t *order)
+
+PURPOSE: 
+    把委单插入market的买卖队列，并冻结未成交部分的资产额度
+
+PARAMETERS:
+    m - 
+    order - 
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    启动时，从slice_order_{time}恢复时调用该函数。
+    order_put()中有冻结资产的操作，这个应该是失败的，
+    调用market_put_order()的load_orders()没有处理返回值
+---------------------------------------------------------------------------*/
 int market_put_order(market_t *m, order_t *order)
 {
     return order_put(m, order);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: order_t *market_get_order(market_t *m, uint64_t order_id)
+
+PURPOSE: 
+    从market的委单表中查找委单
+    
+PARAMETERS:
+    m - 货币对
+    order_id - 查找的委单id
+    
+RETURN VALUE: 
+    如果查找成功，返回委单对象指针，否则返回 NULL
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    order_t *order = market_get_order(market, order_id);
+    if (order == NULL) {
+        return reply_error(ses, pkg, 10, "order not found");
+    }
+
+REMARKS: 
+    从market_t->orders中查找，该结构存储交易中的委单
+---------------------------------------------------------------------------*/
 order_t *market_get_order(market_t *m, uint64_t order_id)
 {
     struct dict_order_key key = { .order_id = order_id };
@@ -997,6 +1543,32 @@ order_t *market_get_order(market_t *m, uint64_t order_id)
     return NULL;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: skiplist_t *market_get_order_list(market_t *m, uint32_t user_id)
+
+PURPOSE: 
+    从market的委单表中查找该用户的所有委单
+    
+PARAMETERS:
+    m - 货币对市场
+    user_id - 查找的user id
+    
+RETURN VALUE: 
+    如果查找成功，返回委单列表指针，否则返回 NULL
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    order_t *order = market_get_order(market, order_id);
+    if (order == NULL) {
+        return reply_error(ses, pkg, 10, "order not found");
+    }
+
+REMARKS: 
+    收到order.query命令后调用
+    从market_t->users中查找，该结构存储每个账户的交易中的委单列表
+---------------------------------------------------------------------------*/
 skiplist_t *market_get_order_list(market_t *m, uint32_t user_id)
 {
     struct dict_user_key key = { .user_id = user_id };
@@ -1007,6 +1579,32 @@ skiplist_t *market_get_order_list(market_t *m, uint32_t user_id)
     return NULL;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int market_get_status(market_t *m, size_t *ask_count, mpd_t *ask_amount, 
+            size_t *bid_count, mpd_t *bid_amount)
+
+PURPOSE: 
+    统计货币对交易中的单据数量、交易量
+    
+PARAMETERS:
+    m -
+    ask_count  - 卖单单据数量
+    ask_amount - 卖单交易数量
+    bid_count  - 买单单据数量
+    bid_amount - 买单交易数量
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    收到market.summary时调用
+---------------------------------------------------------------------------*/
 int market_get_status(market_t *m, size_t *ask_count, mpd_t *ask_amount, size_t *bid_count, mpd_t *bid_amount)
 {
     *ask_count = m->asks->len;
@@ -1031,6 +1629,27 @@ int market_get_status(market_t *m, size_t *ask_count, mpd_t *ask_amount, size_t 
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: sds market_status(sds reply)
+
+PURPOSE: 
+    查询最近提交的委单id、最近的成交单id
+    
+PARAMETERS:
+    reply - 查询结果附加到该字符串尾部
+    
+RETURN VALUE: 
+    拼接之后的字符串
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    cli 收到命令 status 时调用      
+---------------------------------------------------------------------------*/
 sds market_status(sds reply)
 {
     reply = sdscatprintf(reply, "order last ID: %"PRIu64"\n", order_id_start);

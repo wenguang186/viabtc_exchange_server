@@ -9,7 +9,27 @@
 # include "me_history.h"
 # include "me_message.h"
 
+/*---------------------------------------------------------------------------
+VARIABLE: static dict_t *dict_update;
+
+PURPOSE: 
+    余额更新命令缓存，存储balance.update命令（server收到的或从operlog装载的）
+
+REMARKS:
+    用于检查余额更新命令是否被执行过，如果被执行过，则避免重复执行
+    缓存有效期为24h
+---------------------------------------------------------------------------*/
 static dict_t *dict_update;
+
+/*---------------------------------------------------------------------------
+VARIABLE: static nw_timer timer;
+
+PURPOSE: 
+    余额更新命令缓存清理定时器
+    60s执行一次，删除过期（24h）的缓存
+
+REMARKS:
+---------------------------------------------------------------------------*/
 static nw_timer timer;
 
 struct update_key {
@@ -57,6 +77,30 @@ static void update_dict_val_free(void *val)
     free(val);
 }
 
+
+/*---------------------------------------------------------------------------
+FUNCTION: static void on_timer(nw_timer *timer, void *privdata)
+
+PURPOSE: 
+    余额更新命令缓存清理定时器
+    60s执行一次，删除过期（24h）的缓存
+
+PARAMETERS:
+    [in]timer - 
+    [in]privdata - 
+
+RETURN VALUE: 
+    None
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+
+---------------------------------------------------------------------------*/
 static void on_timer(nw_timer *t, void *privdata)
 {
     double now = current_timestamp();
@@ -71,6 +115,26 @@ static void on_timer(nw_timer *t, void *privdata)
     dict_release_iterator(iter);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int init_update(void)
+
+PURPOSE: 
+    初始化余额更新缓存dict_update，启动清理定时器
+
+PARAMETERS:
+    None
+
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:     
+---------------------------------------------------------------------------*/
 int init_update(void)
 {
     dict_types type;
@@ -92,6 +156,38 @@ int init_update(void)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int update_user_balance(bool real, uint32_t user_id, const char *asset,
+             const char *business, uint64_t business_id, mpd_t *change, json_t *detail)
+
+PURPOSE: 
+    更新用户可用余额
+
+PARAMETERS:
+    real - 是否写入history数据库，并发送balances消息。装载operlog时为false
+    user_id - 
+    asset - 币种
+    business - 事务类型
+    business_id - 事务id
+    change - 变动金额，可正可负
+    detail - 备注明细
+
+RETURN VALUE: 
+    0，执行成功
+    -1，命令已经执行过
+    -2，可用余额不足
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    收到或启动装载 balance.update  时调用
+    如果检查到命令已经被执行过，不再执行
+    如果是收到命令real=true，那么写入balance.history，推送并balances消息到kafka
+---------------------------------------------------------------------------*/
 int update_user_balance(bool real, uint32_t user_id, const char *asset, const char *business, uint64_t business_id, mpd_t *change, json_t *detail)
 {
     struct update_key key;

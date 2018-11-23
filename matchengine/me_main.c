@@ -18,8 +18,39 @@
 const char *__process__ = "matchengine";
 const char *__version__ = "0.1.0";
 
+/*---------------------------------------------------------------------------
+VARIABLE: nw_timer cron_timer
+
+PURPOSE: 
+    日志输出定时器，0.5s一次输出日志信息
+
+REMARKS: 
+    main()中启动定时器 
+---------------------------------------------------------------------------*/
 nw_timer cron_timer;
 
+/*---------------------------------------------------------------------------
+FUNCTION: static void on_cron_check(nw_timer *timer, void *data)
+
+PURPOSE: 
+    定期检查并输出日志
+
+PARAMETERS:
+    timer - timer object
+    data  - extar data
+
+RETURN VALUE: 
+    <Description of function return value>
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 static void on_cron_check(nw_timer *timer, void *data)
 {
     dlog_check_all();
@@ -29,6 +60,32 @@ static void on_cron_check(nw_timer *timer, void *data)
     }
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int init_process(void)
+
+PURPOSE: 
+    初始化进程配置
+
+PARAMETERS:
+    None
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    int ret = init_process();
+    if (ret < 0) {
+        error(EXIT_FAILURE, errno, "init process fail: %d", ret);
+    }
+
+REMARKS: 
+    被main()调用
+
+    找不到在什么地方应用file_limit\core_limit
+---------------------------------------------------------------------------*/
 static int init_process(void)
 {
     if (settings.process.file_limit) {
@@ -45,6 +102,43 @@ static int init_process(void)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int init_log(void)
+
+PURPOSE: 
+    Init log and alert server.
+
+PARAMETERS:
+    None
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    int ret = init_log();
+    if (ret < 0) {
+        error(EXIT_FAILURE, errno, "init log fail: %d", ret);
+    }
+
+REMARKS: 
+    被main()调用，完成日志初始化
+
+    config.json默认配置
+    "log": {
+        "path": "/var/log/trade/matchengine",
+        "flag": "fatal,error,warn,info,debug,trace",
+        "num": 10
+    },
+    "alert": {
+        "host": "matchengine",
+        "addr": "127.0.0.1:4444"
+    }
+    默认路径为/var/log/trade/matchengine，需要以root权限创建trade文件夹
+    默认输出日志级别为"fatal,error,warn,info,debug,trace"，包含debug
+---------------------------------------------------------------------------*/
 static int init_log(void)
 {
     default_dlog = dlog_init(settings.log.path, settings.log.shift, settings.log.max, settings.log.num, settings.log.keep);
@@ -57,6 +151,31 @@ static int init_log(void)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int main(int argc, char *argv[])
+
+PURPOSE: 
+    The entry of the program. Run initialization and start the match server.
+
+PARAMETERS:
+    argc – the argument count.
+    argv - the argument list.
+
+RETURN VALUE: 
+    int - =0, strop. <0, init error.
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    None
+
+REMARKS: 
+    启动命令
+    ./matchengine.exe config.json
+    ./restart.sh
+    调用各功能模块的初始化函数，并且启动match server开始接收数据，启动定时器定时保存日志
+---------------------------------------------------------------------------*/
 int main(int argc, char *argv[])
 {
     printf("process: %s version: %s, compile date: %s %s\n", __process__, __version__, __DATE__, __TIME__);

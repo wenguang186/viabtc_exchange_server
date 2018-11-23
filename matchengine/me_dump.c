@@ -8,6 +8,29 @@
 # include "me_market.h"
 # include "me_balance.h"
 
+/*---------------------------------------------------------------------------
+FUNCTION: static sds sql_append_mpd(sds sql, mpd_t *val, bool comma)
+
+PURPOSE: 
+    把mpd_t类型转为字符串，附加到sql字符串尾部
+
+PARAMETERS:
+    sql   - 字符串，将val添加到其尾部
+    val   - 将要添加的数值
+    comma - 是否追加逗号
+
+RETURN VALUE: 
+    拼接之后的字符串
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 static sds sql_append_mpd(sds sql, mpd_t *val, bool comma)
 {
     char *str = mpd_to_sci(val, 0);
@@ -19,6 +42,35 @@ static sds sql_append_mpd(sds sql, mpd_t *val, bool comma)
     return sql;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int dump_orders_list(MYSQL *conn, const char *table, skiplist_t *list)
+
+PURPOSE: 
+    输出深度委单到mysql.trade_log.slice_order_${time}
+
+PARAMETERS:
+    conn – MySQL数据链接
+    table - 表名，slice_order_$timestamp 后缀时间戳参数
+    list - 委单列表，当前货币对的asks/bids列表
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    int ret;
+    ret = dump_orders_list(conn, table, market->asks);
+    if (ret < 0) {
+        log_error("dump market: %s asks orders list fail: %d", market->name, ret);
+        return -__LINE__;
+    }
+
+REMARKS: 
+    把未成交的深度委单列表，写入数据库做持久化存储。
+    注意，这里并没有与撮合过程做互斥，list也没有做保护，存在冲突问题
+---------------------------------------------------------------------------*/
 static int dump_orders_list(MYSQL *conn, const char *table, skiplist_t *list)
 {
     sds sql = sdsempty();
@@ -79,6 +131,35 @@ static int dump_orders_list(MYSQL *conn, const char *table, skiplist_t *list)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int dump_orders(MYSQL *conn, const char *table)
+
+PURPOSE: 
+    执行深度委单快照
+    创建快照数据表mysql.trade_log.slice_order_${time}，并调用输出深度委单接口
+
+PARAMETERS:
+    conn – MySQL数据链接
+    table - 表名，slice_order_$timestamp 后缀时间戳参数
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    int ret = dump_orders(conn, table);
+    if (ret < 0) {
+        log_error("dump_orders to %s fail: %d", table, ret);
+        sdsfree(table);
+        return -__LINE__;
+    }
+
+REMARKS: 
+    把未成交的深度委单列表，写入数据库做持久化存储。
+    注意，这里并没有与撮合过程做互斥，get_market()得到的market也没有做保护，存在冲突问题
+---------------------------------------------------------------------------*/
 int dump_orders(MYSQL *conn, const char *table)
 {
     sds sql = sdsempty();
@@ -123,6 +204,33 @@ int dump_orders(MYSQL *conn, const char *table)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int dump_balance_dict(MYSQL *conn, const char *table, dict_t *dict)
+
+PURPOSE: 
+    用户资产余额输出接口，写余额结构到mysql.trade_log.slice_balance_$timestamp
+
+PARAMETERS:
+    conn  – MySQL数据链接
+    table - 表名，slice_order_$timestamp 后缀时间戳参数
+    dict  - 资产字典
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    int ret = dump_balance_dict(conn, table, dict_balance);
+    if (ret < 0) {
+        log_error("dump_balance_dict fail: %d", ret);
+        return -__LINE__;
+    }
+
+REMARKS: 
+    注意，这里并没有与撮合过程做互斥
+---------------------------------------------------------------------------*/
 static int dump_balance_dict(MYSQL *conn, const char *table, dict_t *dict)
 {
     sds sql = sdsempty();
@@ -174,6 +282,41 @@ static int dump_balance_dict(MYSQL *conn, const char *table, dict_t *dict)
     return 0;
 }
 
+
+/*---------------------------------------------------------------------------
+FUNCTION: int dump_balance(MYSQL *conn, const char *table)
+
+PURPOSE: 
+    执行用户余额快照
+    创建dict_balance快照，并调用输出接口保存到数据表mysql.trade_log.slice_balance_$timestamp
+
+PARAMETERS:
+    conn – MySQL数据链接
+    table - 表名，slice_order_$timestamp 后缀时间戳参数
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    int ret = dump_balance(conn, table);
+    if (ret < 0) {
+        log_error("dump_balance to %s fail: %d", table, ret);
+        sdsfree(table);
+        return -__LINE__;
+    }
+
+REMARKS: 
+    注意，这里并没有与撮合过程做互斥，dict_balance没有做保护，存在冲突问题
+
+    反向调用顺序（退栈）
+    dump_order_to_db()
+    dump_to_db()
+    make_slice()
+    on_timer()
+---------------------------------------------------------------------------*/
 int dump_balance(MYSQL *conn, const char *table)
 {
     sds sql = sdsempty();

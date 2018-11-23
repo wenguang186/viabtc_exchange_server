@@ -6,7 +6,28 @@
 # include "me_config.h"
 # include "me_balance.h"
 
+/*---------------------------------------------------------------------------
+VARIABLE: dict_t *dict_balance;
+
+PURPOSE: 
+    用户余额结构
+    以struct balance_key为键值(user_id/BALANCE_TYPE_AVAILABLE,user_id/BALANCE_TYPE_FREEZE)
+
+REMARKS: 
+    有一系列的访问函数get/set/del/add/sub/status，可以访问dict_balance
+    me_cli.c查询资产 与me_dump.c 输出资产导数据库时，也有用到
+---------------------------------------------------------------------------*/
 dict_t *dict_balance;
+
+/*---------------------------------------------------------------------------
+VARIABLE: static dict_t *dict_asset;
+
+PURPOSE: 
+    存储资产的管理配置
+
+REMARKS: 
+    主要用于资产格式化asset_prec/asset_prec_show 与 重复检查 asset_exist
+---------------------------------------------------------------------------*/
 static dict_t *dict_asset;
 
 struct asset_type {
@@ -112,6 +133,27 @@ static int init_dict(void)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int init_balance()
+
+PURPOSE: 
+    Init dict_asset.
+
+PARAMETERS:
+    None
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 int init_balance()
 {
     ERR_RET(init_dict());
@@ -154,6 +196,29 @@ int asset_prec_show(const char *asset)
     return at ? at->prec_show: -1;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: mpd_t *balance_get(uint32_t user_id, uint32_t type, const char *asset)
+
+PURPOSE: 
+    读取用户资产余额
+
+PARAMETERS:
+    user_id - 
+    type    - BALANCE_TYPE_AVAILABLE/BALANCE_TYPE_FREEZE
+    asset   - coin name
+
+RETURN VALUE: 
+    User's balance, if success. NULL, if failed. 
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 mpd_t *balance_get(uint32_t user_id, uint32_t type, const char *asset)
 {
     struct balance_key key;
@@ -169,6 +234,29 @@ mpd_t *balance_get(uint32_t user_id, uint32_t type, const char *asset)
     return NULL;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: void balance_del(uint32_t user_id, uint32_t type, const char *asset)
+
+PURPOSE: 
+    清空用户资产余额
+
+PARAMETERS:
+    user_id - 
+    type    - BALANCE_TYPE_AVAILABLE/BALANCE_TYPE_FREEZE
+    asset   - coin name
+
+RETURN VALUE: 
+    None
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 void balance_del(uint32_t user_id, uint32_t type, const char *asset)
 {
     struct balance_key key;
@@ -178,6 +266,30 @@ void balance_del(uint32_t user_id, uint32_t type, const char *asset)
     dict_delete(dict_balance, &key);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: mpd_t *balance_set(uint32_t user_id, uint32_t type, const char *asset, mpd_t *amount)
+
+PURPOSE: 
+    重置用户资产余额
+
+PARAMETERS:
+    user_id - 
+    type    - BALANCE_TYPE_AVAILABLE/BALANCE_TYPE_FREEZE
+    asset   - coin name
+    amount  - =0删除余额，>0设置余额，不允许<0
+
+RETURN VALUE: 
+    New balance, if success. NULL, if failed. 
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 mpd_t *balance_set(uint32_t user_id, uint32_t type, const char *asset, mpd_t *amount)
 {
     struct asset_type *at = get_asset_type(asset);
@@ -215,6 +327,30 @@ mpd_t *balance_set(uint32_t user_id, uint32_t type, const char *asset, mpd_t *am
     return result;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: mpd_t *balance_add(uint32_t user_id, uint32_t type, const char *asset, mpd_t *amount)
+
+PURPOSE: 
+    增加用户资产余额
+
+PARAMETERS:
+    user_id - 
+    type    - BALANCE_TYPE_AVAILABLE/BALANCE_TYPE_FREEZE
+    asset   - coin name
+    amount  - >=0要增加的余额，不允许<0
+
+RETURN VALUE: 
+    New balance, if success. NULL, if failed. 
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 mpd_t *balance_add(uint32_t user_id, uint32_t type, const char *asset, mpd_t *amount)
 {
     struct asset_type *at = get_asset_type(asset);
@@ -241,6 +377,30 @@ mpd_t *balance_add(uint32_t user_id, uint32_t type, const char *asset, mpd_t *am
     return balance_set(user_id, type, asset, amount);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: mpd_t *balance_sub(uint32_t user_id, uint32_t type, const char *asset, mpd_t *amount)
+
+PURPOSE: 
+    减少用户资产余额
+
+PARAMETERS:
+    user_id - 
+    type    - BALANCE_TYPE_AVAILABLE/BALANCE_TYPE_FREEZE
+    asset   - coin name
+    amount  - >=0要减少的余额，不允许<0
+
+RETURN VALUE: 
+    New balance, if success. NULL, if failed. 
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 mpd_t *balance_sub(uint32_t user_id, uint32_t type, const char *asset, mpd_t *amount)
 {
     struct asset_type *at = get_asset_type(asset);
@@ -266,6 +426,32 @@ mpd_t *balance_sub(uint32_t user_id, uint32_t type, const char *asset, mpd_t *am
     return result;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: mpd_t *balance_freeze(uint32_t user_id, const char *asset, mpd_t *amount)
+
+PURPOSE: 
+    冻结用户资产
+
+PARAMETERS:
+    user_id - 
+    asset   - coin name
+    amount  - >=0要增加冻结的余额，不允许<0
+
+RETURN VALUE: 
+    New available balance, if success. NULL, if failed. 
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    冻结成功的前提：
+    1.asset合法；2.amount >= mpd_zero；3. cur available >= amount
+
+    问题：没有做互斥，如果单线程执行撮合，可能还是可以的，但是和dump也还是有冲突
+---------------------------------------------------------------------------*/
 mpd_t *balance_freeze(uint32_t user_id, const char *asset, mpd_t *amount)
 {
     struct asset_type *at = get_asset_type(asset);
@@ -292,6 +478,32 @@ mpd_t *balance_freeze(uint32_t user_id, const char *asset, mpd_t *amount)
     return available;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: mpd_t *balance_unfreeze(uint32_t user_id, const char *asset, mpd_t *amount)
+
+PURPOSE: 
+    解冻用户资产
+
+PARAMETERS:
+    user_id - 
+    asset   - coin name
+    amount  - >=0要解冻的余额，不允许<0
+
+RETURN VALUE: 
+    New freezed balance, if success. NULL, if failed. 
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    解冻成功的前提：
+    1.asset合法；2.amount >= mpd_zero；3. cur freeze >= amount
+
+    问题：没有做互斥，如果单线程执行撮合，可能还是可以的，但是和dump也还是有冲突
+---------------------------------------------------------------------------*/
 mpd_t *balance_unfreeze(uint32_t user_id, const char *asset, mpd_t *amount)
 {
     struct asset_type *at = get_asset_type(asset);
@@ -318,6 +530,27 @@ mpd_t *balance_unfreeze(uint32_t user_id, const char *asset, mpd_t *amount)
     return freeze;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: mpd_t *balance_total(uint32_t user_id, const char *asset)
+
+PURPOSE: 
+    读取用户资产总额
+
+PARAMETERS:
+    user_id - 
+    asset   - coin name
+
+RETURN VALUE: 
+    User's total balance 
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+---------------------------------------------------------------------------*/
 mpd_t *balance_total(uint32_t user_id, const char *asset)
 {
     mpd_t *balance = mpd_new(&mpd_ctx);
@@ -334,6 +567,31 @@ mpd_t *balance_total(uint32_t user_id, const char *asset)
     return balance;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int balance_status(const char *asset, mpd_t *total, size_t *available_count, mpd_t *available, size_t *freeze_count, mpd_t *freeze)
+
+PURPOSE: 
+    读取所有用户资产总额
+
+PARAMETERS:
+    asset   - coin name
+    total   - All user's total balance
+    available_count - The Count of user who has available balance
+    available - All user's available balance
+    freeze_count  - The Count of user who has freeze balance
+    freeze  - All user's freeze balance
+
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+---------------------------------------------------------------------------*/
 int balance_status(const char *asset, mpd_t *total, size_t *available_count, mpd_t *available, size_t *freeze_count, mpd_t *freeze)
 {
     *freeze_count = 0;

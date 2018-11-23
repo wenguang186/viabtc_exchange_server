@@ -15,6 +15,36 @@
 
 static cli_svr *svr;
 
+/*---------------------------------------------------------------------------
+FUNCTION: static sds on_cmd_status(const char *cmd, int argc, sds *argv)
+
+PURPOSE: 
+    获取运行状态：market\operlog\history\message
+
+PARAMETERS:
+    cmd  - 
+    argc - 
+    argv - 
+
+RETURN VALUE: 
+    运行状态信息
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    
+REMARKS: 
+    对应cli命令 status
+    等同于 
+    market.status  
+    operlog last ID
+    operlog pending count
+    history pending count
+    message deals pending count
+    message orders pending count
+    message balances pending count
+---------------------------------------------------------------------------*/
 static sds on_cmd_status(const char *cmd, int argc, sds *argv)
 {
     sds reply = sdsempty();
@@ -25,6 +55,28 @@ static sds on_cmd_status(const char *cmd, int argc, sds *argv)
     return reply;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static sds on_cmd_balance_list(const char *cmd, int argc, sds *argv)
+
+PURPOSE: 
+    统计所有用户的余额
+
+PARAMETERS:
+    cmd  - 
+    argc - 
+    argv - 
+
+RETURN VALUE: 
+    balance 统计信息
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    
+REMARKS: 
+    对应cli命令 balance list
+---------------------------------------------------------------------------*/
 static sds on_cmd_balance_list(const char *cmd, int argc, sds *argv)
 {
     char *asset = NULL;
@@ -55,6 +107,28 @@ static sds on_cmd_balance_list(const char *cmd, int argc, sds *argv)
     return reply;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static sds on_cmd_balance_get(const char *cmd, int argc, sds *argv)
+
+PURPOSE: 
+    获得用户的余额情况
+
+PARAMETERS:
+    cmd  - 
+    argc - 
+    argv - 
+
+RETURN VALUE: 
+    balance 统计信息
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    
+REMARKS: 
+    对应cli命令 balance get user_id
+---------------------------------------------------------------------------*/
 static sds on_cmd_balance_get(const char *cmd, int argc, sds *argv)
 {
     if (argc != 2) {
@@ -86,6 +160,28 @@ error:
     return sdsnew("usage: balance get user_id\n");
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static sds on_cmd_balance_summary(const char *cmd, int argc, sds *argv)
+
+PURPOSE: 
+    统计余额总和、可用、冻结
+
+PARAMETERS:
+    cmd  - 
+    argc - 
+    argv - 
+
+RETURN VALUE: 
+    balance 统计信息
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    
+REMARKS: 
+    对应cli命令 balance summary
+---------------------------------------------------------------------------*/
 static sds on_cmd_balance_summary(const char *cmd, int argc, sds *argv)
 {
     sds reply = sdsempty();
@@ -114,6 +210,28 @@ static sds on_cmd_balance_summary(const char *cmd, int argc, sds *argv)
     return reply;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static sds on_cmd_balance(const char *cmd, int argc, sds *argv)
+
+PURPOSE: 
+    统计余额
+
+PARAMETERS:
+    cmd  - 
+    argc - 
+    argv - 
+
+RETURN VALUE: 
+    balance 统计信息
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    
+REMARKS: 
+    支持cli命令 balance list/get/summary
+---------------------------------------------------------------------------*/
 static sds on_cmd_balance(const char *cmd, int argc, sds *argv)
 {
     if (argc > 0) {
@@ -132,6 +250,28 @@ error:
     return sdsnew("usage: balance list/get/summary\n");
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static sds on_cmd_market_summary(const char *cmd, int argc, sds *argv)
+
+PURPOSE: 
+    统计各货币对的买卖数量与金额
+
+PARAMETERS:
+    cmd  - 
+    argc - 
+    argv - 
+
+RETURN VALUE: 
+    market统计信息
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    
+REMARKS: 
+    对应cli命令 market summary
+---------------------------------------------------------------------------*/
 static sds on_cmd_market_summary(const char *cmd, int argc, sds *argv)
 {
     sds reply = sdsempty();
@@ -156,6 +296,28 @@ static sds on_cmd_market_summary(const char *cmd, int argc, sds *argv)
     return reply;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static sds on_cmd_market(const char *cmd, int argc, sds *argv)
+
+PURPOSE: 
+    统计各货币对的买卖数量与金额
+
+PARAMETERS:
+    cmd  - 
+    argc - 
+    argv - 
+
+RETURN VALUE: 
+    market统计信息
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    
+REMARKS: 
+    目前只支持 market summary
+---------------------------------------------------------------------------*/
 static sds on_cmd_market(const char *cmd, int argc, sds *argv)
 {
     if (argc > 0) {
@@ -170,6 +332,28 @@ error:
     return sdsnew("usage market summary\n");
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static sds on_cmd_makeslice(const char *cmd, int argc, sds *argv)
+
+PURPOSE: 
+    进行一次资产、深度快照，保存到数据库trade_log
+
+PARAMETERS:
+    cmd  - 
+    argc - 
+    argv - 
+
+RETURN VALUE: 
+    None
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    
+REMARKS: 
+    
+---------------------------------------------------------------------------*/
 static sds on_cmd_makeslice(const char *cmd, int argc, sds *argv)
 {
     time_t now = time(NULL);
@@ -177,6 +361,32 @@ static sds on_cmd_makeslice(const char *cmd, int argc, sds *argv)
     return sdsnew("OK\n");
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int init_cli(void)
+
+PURPOSE: 
+    启动命令行服务
+
+PARAMETERS:
+    None
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    None
+
+EXAMPLE CALL:
+    int ret = init_cli();
+    if (ret < 0) {
+        error(EXIT_FAILURE, errno, "init cli fail: %d", ret);
+    }
+
+REMARKS: 
+    可以远程用telnet登录
+    config.json默认配置：
+    "cli": "tcp@127.0.0.1:7317",
+---------------------------------------------------------------------------*/
 int init_cli(void)
 {
     svr = cli_svr_create(&settings.cli);

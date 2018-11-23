@@ -13,15 +13,84 @@
 # include "me_history.h"
 # include "me_message.h"
 
+/*---------------------------------------------------------------------------
+VARIABLE: static rpc_svr *svr;
+
+PURPOSE: 
+    撮合服务结构，定义服务参数、回调函数等
+
+REMARKS:
+    config.json中配置
+    "svr": {
+        "bind": [
+            "tcp@0.0.0.0:7316",
+            "udp@0.0.0.0:7316"
+        ],
+        "buf_limit": 100,
+        "max_pkg_size": 10240,
+        "heartbeat_check": false
+    }
+---------------------------------------------------------------------------*/
 static rpc_svr *svr;
+
+/*---------------------------------------------------------------------------
+VARIABLE: static dict_t *dict_cache;
+
+PURPOSE: 
+    深度缓存
+    收到order.depth命令返回结果时，保存到缓存。下一次收到命令时，如果缓存未超时，返回缓存数据
+
+REMARKS:
+    config.json中未配置cache_timeout，默认值为0.45s    
+---------------------------------------------------------------------------*/
 static dict_t *dict_cache;
+
+/*---------------------------------------------------------------------------
+VARIABLE: static nw_timer cache_timer;
+
+PURPOSE: 
+    定时清空深度缓存dict_cache
+
+REMARKS:
+    60s清空缓存一次
+---------------------------------------------------------------------------*/
 static nw_timer cache_timer;
 
+/*---------------------------------------------------------------------------
+STURCT: struct cache_val
+
+PURPOSE: 
+    dict_cache深度缓存中，存储的数据
+
+REMARKS:
+---------------------------------------------------------------------------*/
 struct cache_val {
-    double      time;
-    json_t      *result;
+    double      time;   // 微秒级时间戳
+    json_t      *result;// 缓存字符串
 };
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int reply_json(nw_ses *ses, rpc_pkg *pkg, const json_t *json)
+
+PURPOSE: 
+    向接收到的会话命令，发送响应数据
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]json - 响应数据
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+---------------------------------------------------------------------------*/
 static int reply_json(nw_ses *ses, rpc_pkg *pkg, const json_t *json)
 {
     char *message_data;
@@ -45,6 +114,35 @@ static int reply_json(nw_ses *ses, rpc_pkg *pkg, const json_t *json)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int reply_error(nw_ses *ses, rpc_pkg *pkg, int code, const char *message)
+
+PURPOSE: 
+    处理失败时，向接收到的会话命令，发送错误反馈
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]code - 错误代码
+    [in]message - 错误内容
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    错误响应的格式为
+    {
+        "error":{"code":1,"message":"invalid argument"},
+        "result":null,
+        "id":123
+    }
+---------------------------------------------------------------------------*/
 static int reply_error(nw_ses *ses, rpc_pkg *pkg, int code, const char *message)
 {
     json_t *error = json_object();
@@ -77,6 +175,34 @@ static int reply_error_service_unavailable(nw_ses *ses, rpc_pkg *pkg)
     return reply_error(ses, pkg, 3, "service unavailable");
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int reply_result(nw_ses *ses, rpc_pkg *pkg, json_t *result)
+
+PURPOSE: 
+    处理成功，向接收到的会话命令，发送处理结果
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]result - 处理结果
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    错误响应的格式为
+    {
+        "error":null,
+        "result":{...},
+        "id":123
+    }
+---------------------------------------------------------------------------*/
 static int reply_result(nw_ses *ses, rpc_pkg *pkg, json_t *result)
 {
     json_t *reply = json_object();
@@ -90,6 +216,33 @@ static int reply_result(nw_ses *ses, rpc_pkg *pkg, json_t *result)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int reply_success(nw_ses *ses, rpc_pkg *pkg)
+
+PURPOSE: 
+    处理成功，向接收到的会话命令，发送成功通知
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    错误响应的格式为
+    {
+        "error":null,
+        "result":{"status":"success"},
+        "id":123
+    }
+---------------------------------------------------------------------------*/
 static int reply_success(nw_ses *ses, rpc_pkg *pkg)
 {
     json_t *result = json_object();
@@ -100,6 +253,29 @@ static int reply_success(nw_ses *ses, rpc_pkg *pkg)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static bool process_cache(nw_ses *ses, rpc_pkg *pkg, sds *cache_key)
+
+PURPOSE: 
+    收到order.depth时，检查深度缓存是否仍有效，如果有效则以缓存数据发送响应
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [out]cache_key - order.depth命令生成的缓存dict_cache的key值
+    
+RETURN VALUE: 
+    缓存有效，返回true，无效返回false
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    缓存超时时，删除对应key的缓存
+---------------------------------------------------------------------------*/
 static bool process_cache(nw_ses *ses, rpc_pkg *pkg, sds *cache_key)
 {
     sds key = sdsempty();
@@ -124,6 +300,28 @@ static bool process_cache(nw_ses *ses, rpc_pkg *pkg, sds *cache_key)
     return true;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int add_cache(sds cache_key, json_t *result)
+
+PURPOSE: 
+    添加到深度缓存
+
+PARAMETERS:
+    [in]cache_key - order.depth命令生成的缓存dict_cache的key值
+    [in]result - order.depth的处理结果，用于缓存的value
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    收到order.depth命令，并且生成新的结果时，放到缓存中
+---------------------------------------------------------------------------*/
 static int add_cache(sds cache_key, json_t *result)
 {
     struct cache_val cache;
@@ -135,6 +333,31 @@ static int add_cache(sds cache_key, json_t *result)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_balance_query(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理balance.query命令
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    balance.query命令格式
+    "params": [1, "BTC"]  // [user_id, asset] asset不存在则返回所有资产
+    "result": {"BTC": {"available": "1.10000000","freeze": "9.90000000"}}
+---------------------------------------------------------------------------*/
 static int on_cmd_balance_query(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     size_t request_size = json_array_size(params);
@@ -233,6 +456,40 @@ static int on_cmd_balance_query(nw_ses *ses, rpc_pkg *pkg, json_t *params)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_balance_update(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理balance.update命令
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    balance.update属于写操作，需要检查是否server接收写操作
+    更新内存中的可用余额（增加或减少）
+    写入balance_history
+    推送kafka deals消息
+    写入operlog
+
+    balance.update命令格式
+    "params": [user_id, asset, business, change, detail] 
+    change为负数表示减少资产
+    示例
+    "params": [1, "BTC", "deposit", 100, "1.2345"]
+    "result": "success"    
+---------------------------------------------------------------------------*/
 static int on_cmd_balance_update(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     if (json_array_size(params) != 6)
@@ -289,6 +546,28 @@ static int on_cmd_balance_update(nw_ses *ses, rpc_pkg *pkg, json_t *params)
     return reply_success(ses, pkg);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_asset_list(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理asset.list命令，返回所有支持的asset币种及精度
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+---------------------------------------------------------------------------*/
 static int on_cmd_asset_list(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     json_t *result = json_array();
@@ -304,6 +583,26 @@ static int on_cmd_asset_list(nw_ses *ses, rpc_pkg *pkg, json_t *params)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static json_t *get_asset_summary(const char *name)
+
+PURPOSE: 
+    获取币种的余额统计
+
+PARAMETERS:
+    [in]name - asset name
+
+RETURN VALUE: 
+    统计json结构
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+---------------------------------------------------------------------------*/
 static json_t *get_asset_summary(const char *name)
 {
     size_t available_count;
@@ -328,6 +627,38 @@ static json_t *get_asset_summary(const char *name)
     return obj;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_asset_summary(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理asset.summary命令，返回币种余额统计
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    asset.summary命令格式
+    "params": ["BTC"]  // asset不存在则返回所有资产
+    "result": {
+            "freeze_count": 0,
+            "available_count": 0,
+            "name": "BCH",
+            "total_balance": "0",
+            "freeze_balance": "0",
+            "available_balance": "0"
+        }
+---------------------------------------------------------------------------*/
 static int on_cmd_asset_summary(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     json_t *result = json_array();
@@ -355,6 +686,62 @@ invalid_argument:
     return reply_error_invalid_argument(ses, pkg);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_order_put_limit(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理order.put_limit命令，返回币种余额统计
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    order.put_limit属于写操作，需要检查是否server接收写操作
+    更新内存中的可用余额（增加或减少）
+    执行撮合，未完全成交，则写入买卖队列，并冻结资产
+    taker/maker完全成交，写入卖卖双方的order_history
+    导致资产变动，写入卖卖双方的balance_history
+    推送kafka orders/deals消息
+    写入operlog
+
+    order.put_limit命令格式
+    parmams:[user_id,market,side,amount,price,taker_fee_rate,maker_fee_rate,source]
+    示例
+    {"method": "order.put_limit", "params": [1,"BTCBCH",1,"1","10000","0.002","0.001","api"], "id": 1516681174}
+    {
+        "error": null,
+        "result": {
+            "mtime": 1542272592.443491,
+            "id": 1,
+            "deal_fee": "0",
+            "market": "BTCBCH",
+            "taker_fee": "0.002",
+            "source": "api",
+            "maker_fee": "0.001",
+            "type": 1,
+            "side": 1,
+            "user": 1,
+            "ctime": 1542272592.443491,
+            "left": "1",
+            "price": "10000",
+            "amount": "1",
+            "deal_stock": "0",
+            "deal_money": "0"
+        },
+        "id": 1516681174
+    }
+---------------------------------------------------------------------------*/
 static int on_cmd_order_put_limit(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     if (json_array_size(params) != 8)
@@ -455,6 +842,62 @@ invalid_argument:
     return reply_error_invalid_argument(ses, pkg);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_order_put_market(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理order.put_market命令，返回币种余额统计
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    order.put_market属于写操作，需要检查是否server接收写操作
+    更新内存中的可用余额（增加或减少）
+    执行撮合，未完全成交，也会关闭委单，只成交能够成交的部分
+    taker/maker完全成交，写入卖卖双方的order_history
+    导致资产变动，写入卖卖双方的balance_history
+    推送kafka orders/deals消息
+    写入operlog
+
+    order.put_market命令格式
+    parmams:[user_id,market,side,amount,taker_fee_rate,source]
+    示例
+    {"method": "order.put_market", "params": [2,"BTCBCH",2,"100","0.002","test"], "id": 1516681174}
+    {
+        "error": null,
+        "result": {
+            "mtime": 1542275054.6989839,
+            "id": 2,
+            "deal_fee": "0.00002",
+            "market": "BTCBCH",
+            "taker_fee": "0.002",
+            "source": "test",
+            "maker_fee": "0",
+            "type": 2,
+            "side": 2,
+            "user": 2,
+            "ctime": 1542275054.698972,
+            "left": "0e-16",
+            "price": "0",
+            "amount": "100",
+            "deal_stock": "0.01",
+            "deal_money": "100"
+        },
+        "id": 1516681174
+    }
+---------------------------------------------------------------------------*/
 static int on_cmd_order_put_market(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     if (json_array_size(params) != 6)
@@ -535,6 +978,56 @@ invalid_argument:
     return reply_error_invalid_argument(ses, pkg);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_order_query(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理 order.pending 命令，返回用户的挂单
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    order.pending 命令格式
+    parmams:[user_id,market,offset,limit]
+    示例
+    "params": [1, "BTCCNY", 0, 100]"
+    "result": {
+        "offset": 0,
+        "limit": 100,
+        "total": 1,
+        "records": [
+            {
+                "id": 2,
+                "ctime": 1492616173.355293,
+                "mtime": 1492697636.238869,
+                "market": "BTCCNY",
+                "user": 2,
+                "type": 1, // 1: limit order，2：market order
+                "side": 2, // 1：sell，2：buy
+                "amount": "1.0000".
+                "price": "7000.00",
+                "taker_fee": "0.0020",
+                "maker_fee": "0.0010",
+                "source": "web",
+                "deal_money": "6300.0000000000",
+                "deal_stock": "0.9000000000",
+                "deal_fee": "0.0009000000"
+            }
+        ]
+    }
+---------------------------------------------------------------------------*/
 static int on_cmd_order_query(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     if (json_array_size(params) != 4)
@@ -598,6 +1091,35 @@ static int on_cmd_order_query(nw_ses *ses, rpc_pkg *pkg, json_t *params)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_order_cancel(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理 order.cancel 命令，返回用户的委单信息
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    order.cancel 属于写操作，需要检查是否server接收写操作
+    关闭委单，解冻资产
+    推送kafka orders消息
+    写入operlog
+
+    order.cancel 命令格式
+    parmams:[user_id,market,order_id]
+---------------------------------------------------------------------------*/
 static int on_cmd_order_cancel(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     if (json_array_size(params) != 3)
@@ -642,6 +1164,30 @@ static int on_cmd_order_cancel(nw_ses *ses, rpc_pkg *pkg, json_t *params)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_order_book(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理 order.book 命令，返回市场的订单信息
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    order.book 命令格式
+    parmams:[market,side,offset,limit]
+---------------------------------------------------------------------------*/
 static int on_cmd_order_book(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     if (json_array_size(params) != 4)
@@ -712,6 +1258,27 @@ static int on_cmd_order_book(nw_ses *ses, rpc_pkg *pkg, json_t *params)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static json_t *get_depth(market_t *market, size_t limit)
+
+PURPOSE: 
+    返回市场的深度信息
+
+PARAMETERS:
+    [in]market - 货币对市场
+    [in]limit  - 接收到的数据报文
+    
+RETURN VALUE: 
+    买卖队列的json结构
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+---------------------------------------------------------------------------*/
 static json_t *get_depth(market_t *market, size_t limit)
 {
     mpd_t *price = mpd_new(&mpd_ctx);
@@ -775,6 +1342,27 @@ static json_t *get_depth(market_t *market, size_t limit)
     return result;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static json_t *get_depth_merge(market_t* market, size_t limit, mpd_t *interval)
+
+PURPOSE: 
+    返回合并精度后的市场的深度信息
+
+PARAMETERS:
+    [in]market - 货币对市场
+    [in]limit  - 接收到的数据报文
+    
+RETURN VALUE: 
+    买卖队列的json结构
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+---------------------------------------------------------------------------*/
 static json_t *get_depth_merge(market_t* market, size_t limit, mpd_t *interval)
 {
     mpd_t *q = mpd_new(&mpd_ctx);
@@ -848,6 +1436,31 @@ static json_t *get_depth_merge(market_t* market, size_t limit, mpd_t *interval)
     return result;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_order_book_depth(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理 order.depth 命令，返回市场的订单信息
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    order.depth 可以使用缓存查询，避免过多影响效率，缓存有效时间为0.45s
+    order.depth 命令格式
+    parmams:[market,limit,interval]
+---------------------------------------------------------------------------*/
 static int on_cmd_order_book_depth(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     if (json_array_size(params) != 3)
@@ -906,6 +1519,31 @@ static int on_cmd_order_book_depth(nw_ses *ses, rpc_pkg *pkg, json_t *params)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_order_detail(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理 order.pending_detail 命令，查询挂单，返回订单信息
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    如果订单已经关闭，返回空值
+    order.pending_detail 命令格式
+    parmams:[market,order_id]
+---------------------------------------------------------------------------*/
 static int on_cmd_order_detail(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     if (json_array_size(params) != 2)
@@ -937,6 +1575,30 @@ static int on_cmd_order_detail(nw_ses *ses, rpc_pkg *pkg, json_t *params)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_order_detail(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理 market.list 命令，返回所有货币对的基础信息
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    order.pending_detail 命令格式
+    parmams:[]
+---------------------------------------------------------------------------*/
 static int on_cmd_market_list(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     json_t *result = json_array();
@@ -957,6 +1619,26 @@ static int on_cmd_market_list(nw_ses *ses, rpc_pkg *pkg, json_t *params)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static json_t *get_market_summary(const char *name)
+
+PURPOSE: 
+    读取货币对的买卖统计
+
+PARAMETERS:
+    [in]name  - market name
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+---------------------------------------------------------------------------*/
 static json_t *get_market_summary(const char *name)
 {
     size_t ask_count;
@@ -979,6 +1661,30 @@ static json_t *get_market_summary(const char *name)
     return obj;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int on_cmd_market_summary(nw_ses *ses, rpc_pkg *pkg, json_t *params)
+
+PURPOSE: 
+    处理 market.summary 命令，返回货币对的统计信息
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    [in]params - 命令参数
+    
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+    market.summary 命令格式
+    parmams:[market]  // 可以为空
+---------------------------------------------------------------------------*/
 static int on_cmd_market_summary(nw_ses *ses, rpc_pkg *pkg, json_t *params)
 {
     json_t *result = json_array();
@@ -1006,6 +1712,27 @@ invalid_argument:
     return reply_error_invalid_argument(ses, pkg);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static void svr_on_recv_pkg(nw_ses *ses, rpc_pkg *pkg)
+
+PURPOSE: 
+    server的回调函数，负责接收数据并根据请求类型，分发执行
+
+PARAMETERS:
+    [in]ses  - 命令请求session
+    [in]pkg  - 接收到的数据报文
+    
+RETURN VALUE: 
+    None
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS:
+---------------------------------------------------------------------------*/
 static void svr_on_recv_pkg(nw_ses *ses, rpc_pkg *pkg)
 {
     json_t *params = json_loadb(pkg->body, pkg->body_size, 0, NULL);
@@ -1198,11 +1925,56 @@ static void cache_dict_val_free(void *val)
     free(val);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static void on_cache_timer(nw_timer *timer, void *privdata)
+
+PURPOSE: 
+    深度缓存清理定时器
+    每60s执行一次，清空深度缓存
+
+PARAMETERS:
+    [in]timer -
+    [in]privdata     - 
+
+RETURN VALUE: 
+    None
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    dict_clear操作与dict_find异步执行，不知道会不会存在冲突
+---------------------------------------------------------------------------*/
 static void on_cache_timer(nw_timer *timer, void *privdata)
 {
     dict_clear(dict_cache);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int init_server(void)
+
+PURPOSE: 
+    初始化并启动server
+    初始化深度缓存，并启动缓存清理定时器
+
+PARAMETERS:
+    None
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    
+---------------------------------------------------------------------------*/
 int init_server(void)
 {
     rpc_svr_type type;

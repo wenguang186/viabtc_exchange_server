@@ -10,9 +10,48 @@
 # include "me_load.h"
 # include "me_dump.h"
 
+/*---------------------------------------------------------------------------
+VARIABLE: static time_t last_slice_time;
+
+PURPOSE: 
+    最后一次快照时间
+
+REMARKS:     
+---------------------------------------------------------------------------*/
 static time_t last_slice_time;
+
+/*---------------------------------------------------------------------------
+VARIABLE: static nw_timer timer;
+
+PURPOSE: 
+    快照定时器，定时执行快照操作
+
+REMARKS:
+
+---------------------------------------------------------------------------*/
 static nw_timer timer;
 
+/*---------------------------------------------------------------------------
+FUNCTION: static time_t get_today_start(void)
+
+PURPOSE: 
+    生成今天0点的时间戳
+
+PARAMETERS:
+    None
+
+RETURN VALUE: 
+    时间戳
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 static time_t get_today_start(void)
 {
     time_t now = time(NULL);
@@ -25,6 +64,32 @@ static time_t get_today_start(void)
     return mktime(&t);
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int get_last_slice(MYSQL *conn, time_t *timestamp, 
+            uint64_t *last_oper_id, uint64_t *last_order_id, uint64_t *last_deals_id)
+
+PURPOSE: 
+    读取最近的一次快照记录
+
+PARAMETERS:
+    [in]conn - mysql.trade_log数据连接
+    [out]timestamp     - 最近一次快照时，创建表名的时间戳
+    [out]last_oper_id  - 最近一次快照时，最后执行的operlog操作日志id
+    [out]last_order_id - 最近一次快照时，最后执行的下单id（不是保存到history的）
+    [out]last_deals_id - 最近一次快照时，最后撮合的成交单id（不是保存到history的）
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    系统启动时，从数据库恢复快照时调用
+---------------------------------------------------------------------------*/
 static int get_last_slice(MYSQL *conn, time_t *timestamp, uint64_t *last_oper_id, uint64_t *last_order_id, uint64_t *last_deals_id)
 {
     sds sql = sdsempty();
@@ -57,6 +122,28 @@ static int get_last_slice(MYSQL *conn, time_t *timestamp, uint64_t *last_oper_id
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int load_slice_from_db(MYSQL *conn, time_t timestamp)
+
+PURPOSE: 
+    恢复最近一次快照的挂单、余额到内存数据结构
+
+PARAMETERS:
+    [in]conn - mysql.trade_log数据连接
+    [in]timestamp - 最近一次快照时，创建表名的时间戳
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    系统启动时，从数据库恢复快照时调用
+---------------------------------------------------------------------------*/
 static int load_slice_from_db(MYSQL *conn, time_t timestamp)
 {
     sds table = sdsempty();
@@ -86,6 +173,29 @@ static int load_slice_from_db(MYSQL *conn, time_t timestamp)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int load_operlog_from_db(MYSQL *conn, time_t date, uint64_t *start_id)
+
+PURPOSE: 
+    读取operlog_$(day)中的记录，并以此恢复上次快照之后的操作
+
+PARAMETERS:
+    conn  - mysql.trade_log数据链接
+    date -  读取日期
+    start_id - 读取>=start_id的记录
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 static int load_operlog_from_db(MYSQL *conn, time_t date, uint64_t *start_id)
 {
     struct tm *t = localtime(&date);
@@ -111,6 +221,29 @@ static int load_operlog_from_db(MYSQL *conn, time_t date, uint64_t *start_id)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int init_from_db(void)
+
+PURPOSE: 
+    初始化用户余额、深度盘面、操作日志
+    读取最近一次余额、深度快照，装载到内存，恢复数据后，准备开始撮合服务
+
+PARAMETERS:
+    None
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    使用最近一次slice，意味着makeslice之后的委单、成交将要被放弃。
+    最近的委单、成交，被曝存在order_id_start/deals_id_start，trade_history不会删除，但是新单到达时，会进行覆盖
+---------------------------------------------------------------------------*/
 int init_from_db(void)
 {
     MYSQL *conn = mysql_connect(&settings.db_log);
@@ -170,6 +303,28 @@ cleanup:
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int dump_order_to_db(MYSQL *conn, time_t end)
+
+PURPOSE: 
+    输出挂单队列到数据库trade_log.slice_order_{time}
+
+PARAMETERS:
+    [in]conn - mysql.trade_log数据链接
+    [in]end  - 快照时间戳，用于创建表名 
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 static int dump_order_to_db(MYSQL *conn, time_t end)
 {
     sds table = sdsempty();
@@ -186,6 +341,28 @@ static int dump_order_to_db(MYSQL *conn, time_t end)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int dump_balance_to_db(MYSQL *conn, time_t end)
+
+PURPOSE: 
+    输出余额到数据库trade_log.slice_balance_{time}
+
+PARAMETERS:
+    [in]conn - mysql.trade_log数据链接
+    [in]end  - 快照时间戳，用于创建表名 
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 static int dump_balance_to_db(MYSQL *conn, time_t end)
 {
     sds table = sdsempty();
@@ -202,6 +379,28 @@ static int dump_balance_to_db(MYSQL *conn, time_t end)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int update_slice_history(MYSQL *conn, time_t end)
+
+PURPOSE: 
+    保存快照信息到trade_log.slice_history
+
+PARAMETERS:
+    [in]conn - mysql.trade_log数据链接
+    [in]end  - 快照时间戳 
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 int update_slice_history(MYSQL *conn, time_t end)
 {
     sds sql = sdsempty();
@@ -220,6 +419,27 @@ int update_slice_history(MYSQL *conn, time_t end)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int dump_to_db(time_t timestamp)
+
+PURPOSE: 
+    调用接口，输出挂单、余额到数据库，并更新快照记录
+
+PARAMETERS:
+    [in]timestamp - 快照时间戳
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    定时或手动快照时调用
+---------------------------------------------------------------------------*/
 int dump_to_db(time_t timestamp)
 {
     MYSQL *conn = mysql_connect(&settings.db_log);
@@ -256,6 +476,28 @@ cleanup:
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int slice_count(MYSQL *conn, time_t timestamp)
+
+PURPOSE: 
+    读取在keeptime内的快照的数量
+
+PARAMETERS:
+    [in]conn - mysql.trade_log数据链接
+    [in]timestamp - 快照时间戳
+
+RETURN VALUE: 
+    >=0, count of slices. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    删除过期快照时，检查是否会留存快照，如果没有有效内的快照，则要保留超出有效期的快照
+---------------------------------------------------------------------------*/
 static int slice_count(MYSQL *conn, time_t timestamp)
 {
     sds sql = sdsempty();
@@ -283,6 +525,28 @@ static int slice_count(MYSQL *conn, time_t timestamp)
     return count;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int delete_slice(MYSQL *conn, uint64_t id, time_t timestamp)
+
+PURPOSE: 
+    删除快照
+
+PARAMETERS:
+    [in]conn - mysql.trade_log数据链接
+    [in]id   - slice_history中的记录id
+    [in]timestamp - 快照时间戳
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+---------------------------------------------------------------------------*/
 static int delete_slice(MYSQL *conn, uint64_t id, time_t timestamp)
 {
     log_info("delete slice id: %"PRIu64", time: %ld start", id, timestamp);
@@ -321,6 +585,29 @@ static int delete_slice(MYSQL *conn, uint64_t id, time_t timestamp)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int clear_slice(time_t timestamp)
+
+PURPOSE: 
+    删除过期快照
+
+PARAMETERS:
+    [in]timestamp - 当前时间戳
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    如果有效期内没有快照，那么不删除过期快照
+    过期时间在config.json中配置，以秒计数，259200=3*24*3600
+    "slice_keeptime": 259200 
+---------------------------------------------------------------------------*/
 int clear_slice(time_t timestamp)
 {
     MYSQL *conn = mysql_connect(&settings.db_log);
@@ -372,6 +659,30 @@ cleanup:
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int make_slice(time_t timestamp)
+
+PURPOSE: 
+    执行快照，并清理过期快照
+
+PARAMETERS:
+    [in]timestamp - 当前时间戳
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    通过fork()创建子进程执行，这样子进程会继承父进程数据
+    可能存在的问题：
+    1.继承服务，监听服务端口继续运行，会继续处理数据，导致快照时时间不一致
+    2.异步定时器、工作线程仍然存在，会继续尝试数据库、日志等操作
+---------------------------------------------------------------------------*/
 int make_slice(time_t timestamp)
 {
     int pid = fork();
@@ -397,6 +708,30 @@ int make_slice(time_t timestamp)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static void on_timer(nw_timer *timer, void *privdata)
+
+PURPOSE: 
+    快照定时器，检查是否到快照时间，并调用快照接口
+
+PARAMETERS:
+    [in]timer - 
+    [in]privdata - 
+
+RETURN VALUE: 
+    None
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    快照间隔在config.json中定义 "slice_interval": 3600
+    定时器检查时间间隔在3600 =< interval <= 3605之间，
+    这样意味着，假设：1.timer可能遇到不准时调用；2.快照执行时间超过5s
+---------------------------------------------------------------------------*/
 static void on_timer(nw_timer *timer, void *privdata)
 {
     time_t now = time(NULL);
@@ -406,6 +741,26 @@ static void on_timer(nw_timer *timer, void *privdata)
     }
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int init_persist(void)
+
+PURPOSE: 
+    启动快照定时器
+
+PARAMETERS:
+    None
+    
+RETURN VALUE: 
+    0
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+---------------------------------------------------------------------------*/
 int init_persist(void)
 {
     nw_timer_set(&timer, 1.0, true, on_timer, NULL);

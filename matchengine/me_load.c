@@ -9,6 +9,28 @@
 # include "me_update.h"
 # include "me_balance.h"
 
+/*---------------------------------------------------------------------------
+FUNCTION: int load_orders(MYSQL *conn, const char *table)
+
+PURPOSE: 
+    加载快照表slice_order_${time}到内存
+
+PARAMETERS:
+    conn – MySQL.trade_log的链接
+    table - 数据表名
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    me_persist中load_slice_from_db()调用，从最近的快照恢复market的买卖队列
+---------------------------------------------------------------------------*/
 int load_orders(MYSQL *conn, const char *table)
 {
     size_t query_limit = 1000;
@@ -73,6 +95,28 @@ int load_orders(MYSQL *conn, const char *table)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int load_balance(MYSQL *conn, const char *table)
+
+PURPOSE: 
+    加载快照表slice_balance_${time}到内存
+
+PARAMETERS:
+    conn – MySQL.trade_log的链接
+    table - 数据表名
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    me_persist中load_slice_from_db()调用，从最近的快照恢复dict_balance
+---------------------------------------------------------------------------*/
 int load_balance(MYSQL *conn, const char *table)
 {
     size_t query_limit = 1000;
@@ -113,6 +157,26 @@ int load_balance(MYSQL *conn, const char *table)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int load_update_balance(json_t *params)
+
+PURPOSE: 
+    恢复update_balance类型的操作，到内存数据结构
+
+PARAMETERS:
+    params - 记录的命令参数
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+---------------------------------------------------------------------------*/
 static int load_update_balance(json_t *params)
 {
     if (json_array_size(params) != 6)
@@ -165,6 +229,26 @@ static int load_update_balance(json_t *params)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int load_limit_order(json_t *params)
+
+PURPOSE: 
+    恢复limit_order类型的操作，到内存数据结构
+
+PARAMETERS:
+    params - 记录的命令参数
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+---------------------------------------------------------------------------*/
 static int load_limit_order(json_t *params)
 {
     if (json_array_size(params) != 8)
@@ -260,6 +344,26 @@ error:
     return -__LINE__;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int load_market_order(json_t *params)
+
+PURPOSE: 
+    恢复market_order类型的操作，到内存数据结构
+
+PARAMETERS:
+    params - 记录的命令参数
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+---------------------------------------------------------------------------*/
 static int load_market_order(json_t *params)
 {
     if (json_array_size(params) != 6)
@@ -329,6 +433,26 @@ error:
     return -__LINE__;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int load_cancel_order(json_t *params)
+
+PURPOSE: 
+    恢复cancel_order类型的操作，到内存数据结构
+
+PARAMETERS:
+    params - 记录的命令参数
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+---------------------------------------------------------------------------*/
 static int load_cancel_order(json_t *params)
 {
     if (json_array_size(params) != 3)
@@ -366,6 +490,31 @@ static int load_cancel_order(json_t *params)
     return 0;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: static int load_oper(json_t *detail)
+
+PURPOSE: 
+    根据操作类型，调用恢复操作数据的接口
+
+PARAMETERS:
+    detail - json格式的操作日志
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    可恢复的日志类型：
+    update_balance
+    limit_order
+    market_order
+    cancel_order
+---------------------------------------------------------------------------*/
 static int load_oper(json_t *detail)
 {
     const char *method = json_string_value(json_object_get(detail, "method"));
@@ -391,6 +540,29 @@ static int load_oper(json_t *detail)
     return ret;
 }
 
+/*---------------------------------------------------------------------------
+FUNCTION: int load_operlog(MYSQL *conn, const char *table, uint64_t *start_id)
+
+PURPOSE: 
+    读取operlog_${day}中的记录，并以此恢复上次快照之后的操作
+
+PARAMETERS:
+    conn  - mysql.trade_log数据链接
+    table - 数据表名称
+    start_id - 读取>=start_id的记录
+
+RETURN VALUE: 
+    Zero, if success. <0, the error line number.
+
+EXCEPTION: 
+    <Exception that may be thrown by the function>
+
+EXAMPLE CALL:
+    <Example call of the function>
+
+REMARKS: 
+    <Additional remarks of the function>
+---------------------------------------------------------------------------*/
 int load_operlog(MYSQL *conn, const char *table, uint64_t *start_id)
 {
     size_t query_limit = 1000;
